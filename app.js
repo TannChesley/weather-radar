@@ -1,11 +1,11 @@
 // ==========================================
-// 1. INITIALIZE THE MAP CANVAS
+// 1. INITIALIZE THE LITE MAP CANVAS
 // ==========================================
 const map = L.map('map', {
     zoomControl: false 
 }).setView([39.8283, -98.5795], 4); 
 
-// Add a sleek light basemap layer
+// Clean Light Voyager theme
 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
     subdomains: 'abcd',
@@ -17,38 +17,61 @@ L.control.zoom({ position: 'topright' }).addTo(map);
 let radarLayers = [];
 let currentFrameIndex = 0;
 let animationInterval = null;
-const frameDuration = 800; 
+const frameDuration = 700; // Slightly faster frame rate for a smooth 8-frame transition
 
 // ==========================================
-// 2. BACKUP RADAR ANIMATION LOOP (IEM RELATIVE TIME)
+// 2. ABSOLUTE TIME 8-FRAME ANIMATION SYSTEM
 // ==========================================
 function loadFallbackRadar() {
-    console.log("Engaging high-availability IEM relative-time loop...");
+    console.log("Engaging precision 8-frame archive loop...");
     document.getElementById('loop-timestamp').innerText = "Looping...";
 
     radarLayers.forEach(layer => map.removeLayer(layer));
     radarLayers = [];
 
-    // IEM layers for relative steps back from the current time slot
-    // n0q: Current, n0q-m05m: -5 mins, n0q-m10m: -10 mins, n0q-m15m: -15 mins
-    const iemRelativeLayers = [
-        { layerName: 'nexrad-n0q-900913-m15m', label: '-15m' },
-        { layerName: 'nexrad-n0q-900913-m10m', label: '-10m' },
-        { layerName: 'nexrad-n0q-900913-m05m', label: '-5m' },
-        { layerName: 'nexrad-n0q-900913',      label: 'Live' }
-    ];
+    const now = new Date();
+    
+    // Core adjustment: Baseline starts 35 minutes ago to ensure absolute archive history exists
+    const serverSafeTime = new Date(now.getTime() - (35 * 60 * 1000));
+    
+    // Extract true UTC numbers directly to avoid local timezone math conflicts
+    let utcYear = serverSafeTime.getUTCFullYear();
+    let utcMonth = serverSafeTime.getUTCMonth();
+    let utcDate = serverSafeTime.getUTCDate();
+    let utcHours = serverSafeTime.getUTCHours();
+    let utcMinutes = Math.floor(serverSafeTime.getUTCMinutes() / 5) * 5; // Round down to nearest 5 mins
+    
+    // Construct a pure UTC baseline clock
+    let baseTime = new Date(Date.UTC(utcYear, utcMonth, utcDate, utcHours, utcMinutes, 0));
 
-    iemRelativeLayers.forEach((config) => {
-        const layer = L.tileLayer.wms('https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi', {
-            layers: config.layerName,
+    // Generate exactly 8 historical slices (spanning 40 total minutes of tracking)
+    for (let i = 7; i >= 0; i--) {
+        let frameTime = new Date(baseTime.getTime() + (i * 5 * 60 * 1000));
+        
+        let year = frameTime.getUTCFullYear();
+        let month = String(frameTime.getUTCMonth() + 1).padStart(2, '0');
+        let day = String(frameTime.getUTCDate()).padStart(2, '0');
+        let hours = String(frameTime.getUTCHours()).padStart(2, '0');
+        let mins = String(frameTime.getUTCMinutes()).padStart(2, '0');
+        
+        let iemTimeString = `${year}-${month}-${day}T${hours}:${mins}:00Z`;
+        console.log("Requesting Archive Frame:", iemTimeString);
+
+        // Pulling from the true absolute historical archive timeline endpoint
+        const layer = L.tileLayer.wms('https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi', {
+            layers: 'nexrad-n0q-900913',
+            time: iemTimeString,
             format: 'image/png',
             transparent: true,
-            opacity: 0, // Controlled by player visibility toggles
+            opacity: 0, 
             attribution: 'Radar &copy; IEM / NOAA'
         }).addTo(map);
 
-        radarLayers.push({ layer: layer, timeLabel: config.label });
-    });
+        // UI Label: Converts the UTC frame time back to your local wall-clock time format
+        let localTimeString = frameTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        
+        radarLayers.push({ layer: layer, timeLabel: localTimeString });
+    }
 
     currentFrameIndex = 0;
     radarLayers[0].layer.setOpacity(0.65);
@@ -69,7 +92,7 @@ async function loadLiveRadar() {
         const timestamps = data.past || data.radar || data;
 
         if (!timestamps || !Array.isArray(timestamps) || timestamps.length === 0) {
-            console.warn("Primary radar API returned empty data. Engaging fallback...");
+            console.warn("Primary radar API down. Engaging archive loop...");
             loadFallbackRadar();
             return;
         }
@@ -77,7 +100,8 @@ async function loadLiveRadar() {
         radarLayers.forEach(layer => map.removeLayer(layer));
         radarLayers = [];
 
-        const recentTimestamps = timestamps.slice(-5);
+        // Match the primary engine to 8 frames as well
+        const recentTimestamps = timestamps.slice(-8);
 
         recentTimestamps.forEach((frame) => {
             const timeValue = frame.time || frame;
@@ -98,7 +122,7 @@ async function loadLiveRadar() {
         setupAnimationControls();
 
     } catch (error) {
-        console.error("Primary radar network error. Engaging fallback...", error);
+        console.error("Primary radar network error. Engaging archive loop...", error);
         loadFallbackRadar();
     }
 }
