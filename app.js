@@ -17,61 +17,36 @@ L.control.zoom({ position: 'topright' }).addTo(map);
 let radarLayers = [];
 let currentFrameIndex = 0;
 let animationInterval = null;
-const frameDuration = 700; // Snappy loop speed for 8 frames
+const frameDuration = 800; 
 
 // ==========================================
-// 2. DYNAMIC 8-FRAME VALIDATED TIME ENGINE
+// 2. HIGH-AVAILABILITY RELATIVE TIME ENGINE
 // ==========================================
 function loadFallbackRadar() {
-    console.log("Engaging dynamic 8-frame validated archive loop...");
+    console.log("Engaging high-availability IEM relative-time loop...");
     document.getElementById('loop-timestamp').innerText = "Looping...";
 
     radarLayers.forEach(layer => map.removeLayer(layer));
     radarLayers = [];
 
-    // Calculate the most recent completed 5-minute block in UTC time
-    const now = new Date();
-    
-    // Step back 15 minutes from right now to ensure the images have finished rendering on the server
-    let targetTime = new Date(now.getTime() - (15 * 60 * 1000));
-    
-    // Round down to the nearest 5-minute mark
-    let minutes = Math.floor(targetTime.getUTCMinutes() / 5) * 5;
-    
-    // Build an array of 8 consecutive 5-minute intervals going backward
-    let frameTimes = [];
-    for (let i = 0; i < 8; i++) {
-        let loopTime = new Date(targetTime.getTime() - (i * 5 * 60 * 1000));
-        let loopMinutes = Math.floor(loopTime.getUTCMinutes() / 5) * 5;
-        loopTime.setUTCMinutes(loopMinutes);
-        loopTime.setUTCSeconds(0);
-        frameTimes.unshift(loopTime); // Put oldest frames first so the loop plays forward
-    }
+    // The working sequence supported by the relative time server endpoint
+    const iemRelativeLayers = [
+        { layerName: 'nexrad-n0q-900913-m15m', label: '-15m' },
+        { layerName: 'nexrad-n0q-900913-m10m', label: '-10m' },
+        { layerName: 'nexrad-n0q-900913-m05m', label: '-5m' },
+        { layerName: 'nexrad-n0q-900913',      label: 'Live' }
+    ];
 
-    // Spin up the 8 layers using the precise historical timestamps
-    frameTimes.forEach((frameTime) => {
-        let year = frameTime.getUTCFullYear();
-        let month = String(frameTime.getUTCMonth() + 1).padStart(2, '0');
-        let day = String(frameTime.getUTCDate()).padStart(2, '0');
-        let hours = String(frameTime.getUTCHours()).padStart(2, '0');
-        let mins = String(frameTime.getUTCMinutes()).padStart(2, '0');
-        
-        let iemTimeString = `${year}-${month}-${day}T${hours}:${mins}:00Z`;
-        console.log("Requesting Validated Frame:", iemTimeString);
-
-        const layer = L.tileLayer.wms('https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q-t.cgi', {
-            layers: 'nexrad-n0q-900913',
-            time: iemTimeString,
+    iemRelativeLayers.forEach((config) => {
+        const layer = L.tileLayer.wms('https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi', {
+            layers: config.layerName,
             format: 'image/png',
             transparent: true,
             opacity: 0, 
             attribution: 'Radar &copy; IEM / NOAA'
         }).addTo(map);
 
-        // UI Label: Display the time converted nicely to your local wall-clock time
-        let localTimeString = frameTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-        
-        radarLayers.push({ layer: layer, timeLabel: localTimeString });
+        radarLayers.push({ layer: layer, timeLabel: config.label });
     });
 
     currentFrameIndex = 0;
@@ -93,7 +68,7 @@ async function loadLiveRadar() {
         const timestamps = data.past || data.radar || data;
 
         if (!timestamps || !Array.isArray(timestamps) || timestamps.length === 0) {
-            console.warn("Primary API unavailable. Activating dynamic archive loop...");
+            console.warn("Primary API unavailable. Activating relative loop backup...");
             loadFallbackRadar();
             return;
         }
@@ -101,8 +76,7 @@ async function loadLiveRadar() {
         radarLayers.forEach(layer => map.removeLayer(layer));
         radarLayers = [];
 
-        // Match primary engine to 8 frames
-        const recentTimestamps = timestamps.slice(-8);
+        const recentTimestamps = timestamps.slice(-4);
 
         recentTimestamps.forEach((frame) => {
             const timeValue = frame.time || frame;
@@ -123,12 +97,11 @@ async function loadLiveRadar() {
         setupAnimationControls();
 
     } catch (error) {
-        console.error("Primary network error. Activating dynamic archive loop...", error);
+        console.error("Primary API network error. Activating relative loop backup...", error);
         loadFallbackRadar();
     }
 }
 
-// Frame switching mechanics
 function showFrame(index) {
     if (radarLayers.length === 0 || !radarLayers[index]) return;
 
@@ -204,7 +177,7 @@ document.getElementById('location-btn').onclick = () => {
 };
 
 // ==========================================
-// 6. RUN INITIALIZATION
+// 6. RUN INITIALIZATION & RE-FIT WINDOW BOUNDS
 // ==========================================
 loadLiveRadar();
 
